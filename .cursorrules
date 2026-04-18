@@ -1,0 +1,11 @@
+Project: ReviewSense - Customer Review Intelligence Platform
+Hackathon: Hack Malenadu '26
+Stack: React+Vite+TailwindCSS / Node.js+Express+MongoDB / Python FastAPI
+Models: cardiffnlp sentiment, yangheng ABSA, Helsinki-NLP translation
+Pattern: Same as MedShield project structure
+Rules:
+- All API responses: { success: bool, data: {}, message: str }
+- All async functions: try/catch with proper error handling
+- TailwindCSS only, no inline styles
+- lucide-react for all icons
+- Add console.log at every major processing step

@@ -1,0 +1,49 @@
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Node.js dependencies and logs
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Frontend build artifacts
+frontend/dist/
+frontend/.vite/
+
+# Backend runtime artifacts
+backend/uploads/
+backend/logs/
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
+
+# AI service temporary/model caches
+ai-service/.cache/
+ai-service/models/__pycache__/
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Coverage and reports
+coverage/
+*.lcov
+]
