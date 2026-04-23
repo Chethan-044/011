@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const pythonBridge = require('./pythonBridge');
 const { fetchReviewsBySku } = require('./skuApiService');
 const { sendIssueAlert } = require('./emailService');
+const issueService = require('./issueService');
 
 const POLL_INTERVAL_MS = 15000;
 const DEFAULT_WINDOW = 50;
@@ -253,6 +254,20 @@ class RealtimeReviewEngine {
 
       const prevClusterCount = state.issueClusters[cluster] || 0;
       state.issueClusters[cluster] = prevClusterCount + 1;
+
+      // Persist issue in MongoDB and trigger auto-escalation if threshold crossed
+      try {
+        await issueService.upsertIssue({
+          topic: cluster,
+          sku: state.sku,
+          category: primarySentiment === 'Negative' ? 'complaint' : 'praise',
+          reviewText: review.text,
+          sentiment: primarySentiment,
+          timestamp: review.timestamp,
+        });
+      } catch (issueErr) {
+        console.error('[realtime] issueService.upsertIssue error:', issueErr.message);
+      }
 
       // Fire email alert when an issue cluster first becomes "emerging" (hits 2 occurrences)
       if (prevClusterCount < 2 && state.issueClusters[cluster] >= 2) {
