@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import Papa from 'papaparse';
 import api from '../api/axios.js';
 import FileDropzone from '../components/FileDropzone.jsx';
 import ProcessingStatus from '../components/ProcessingStatus.jsx';
+import useRealtimeSkuStream from '../hooks/useRealtimeSkuStream.js';
 
 const CATEGORIES = [
   'Electronics',
@@ -29,9 +30,13 @@ export default function UploadPage() {
   const [batchId, setBatchId] = useState('');
   const [processing, setProcessing] = useState(false);
   const [processDone, setProcessDone] = useState(false);
-  const [feedRunning, setFeedRunning] = useState(false);
-  const [feedCount, setFeedCount] = useState(0);
-  const [feedProduct, setFeedProduct] = useState('Live SKU');
+  const [feedSku, setFeedSku] = useState('SKU123');
+
+  const realtime = useRealtimeSkuStream({
+    sku: feedSku,
+    category: productCategory,
+    enabled: tab === 'api',
+  });
 
   const ingestFile = (f) => {
     setFile(f);
@@ -67,28 +72,12 @@ export default function UploadPage() {
     toast.success(`${lines.length} lines ready`);
   };
 
-  const startFeed = () => {
-    setFeedRunning(true);
-    setFeedCount(0);
-    const samples = [
-      'Delivery was fast but packaging was damaged.',
-      'Taste is okay, quantity feels a bit low.',
-      'Highly recommend, five stars.',
-      'Battery drains too fast compared to my old phone.',
-      'Fabric quality is great, size runs small.',
-    ];
-    let n = 0;
-    const id = setInterval(() => {
-      setParsedReviews((prev) => [...prev, { text: samples[n % samples.length] }]);
-      n += 1;
-      setFeedCount(n);
-      if (n >= 25) {
-        clearInterval(id);
-        setFeedRunning(false);
-        toast.success('Simulated feed complete');
-      }
-    }, 200);
-  };
+  useEffect(() => {
+    if (tab !== 'api') return;
+    const rolling = realtime.state?.rollingReviews || [];
+    const mapped = rolling.map((r) => ({ text: r.text })).filter((r) => r.text);
+    setParsedReviews(mapped);
+  }, [tab, realtime.state]);
 
   async function runProcess(id) {
     setProcessing(true);
@@ -115,12 +104,19 @@ export default function UploadPage() {
       toast.error('Select a file first');
       return;
     }
-    if (tab !== 'file' && !parsedReviews.length) {
-      toast.error('Add reviews first');
+    let reviewsForUpload = parsedReviews;
+    if (tab === 'api') {
+      const rolling = realtime.state?.rollingReviews || [];
+      if (rolling.length) {
+        reviewsForUpload = rolling.map((r) => ({ text: r.text })).filter((r) => r.text);
+      }
+    }
+    if (tab !== 'file' && !reviewsForUpload.length) {
+      toast.error(tab === 'api' ? 'Waiting for live reviews from SKU API. Please wait a few seconds.' : 'Add reviews first');
       return;
     }
     try {
-      console.log('[Upload] posting reviews', parsedReviews.length);
+      console.log('[Upload] posting reviews', reviewsForUpload.length);
       let res;
       if (tab === 'file' && file) {
         const fd = new FormData();
@@ -130,7 +126,7 @@ export default function UploadPage() {
         res = await api.post('/api/reviews/upload', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
       } else {
         res = await api.post('/api/reviews/upload', {
-          reviews: parsedReviews,
+          reviews: reviewsForUpload,
           productName,
           productCategory,
           source: tab === 'api' ? 'api' : 'manual',
@@ -210,21 +206,33 @@ export default function UploadPage() {
 
           {tab === 'api' && (
             <div className="card space-y-3">
-              <p className="text-slate-700">Simulated real-time ingestion (~5 reviews/sec burst).</p>
+              <p className="text-slate-700">Realtime ingestion enabled (auto-refresh every 5 seconds).</p>
               <input
                 className="border border-gray-200 rounded-lg px-3 py-2 w-full"
-                value={feedProduct}
-                onChange={(e) => setFeedProduct(e.target.value)}
-                placeholder="Product name"
+                value={feedSku}
+                onChange={(e) => {
+                  setFeedSku(e.target.value);
+                  setParsedReviews([]);
+                }}
+                placeholder="SKU ID (e.g. SKU123)"
               />
-              <button type="button" className="btn-primary" onClick={startFeed} disabled={feedRunning}>
-                {feedRunning ? 'Running…' : 'Start live feed'}
-              </button>
-              <p className="text-sm text-slate-600">Reviews received: {feedCount}</p>
+              <p className="text-sm text-slate-600">Polling interval: 5 seconds</p>
+              <p className="text-sm text-slate-600">
+                Reviews received: {realtime.state?.processedCount || 0}
+              </p>
+              <p className="text-sm text-slate-600">
+                Last polled: {realtime.state?.lastPolledAt ? new Date(realtime.state.lastPolledAt).toLocaleTimeString() : '—'}
+              </p>
+              {realtime.error && <p className="text-sm text-red-600">{realtime.error}</p>}
             </div>
           )}
 
-          <button type="button" className="btn-primary" onClick={() => setStep(2)} disabled={!parsedReviews.length}>
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={() => setStep(2)}
+            disabled={tab !== 'api' && !parsedReviews.length}
+          >
             Continue
           </button>
         </div>

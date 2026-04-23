@@ -9,3 +9,7 @@ Rules:
 - TailwindCSS only, no inline styles
 - lucide-react for all icons
 - Add console.log at every major processing step
+
+
+.\venv\Scripts\Activate.ps1
+uvicorn main:app --reload --port 8000
