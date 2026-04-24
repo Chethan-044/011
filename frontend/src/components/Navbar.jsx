@@ -31,6 +31,11 @@ export default function Navbar() {
           <NavLink to="/reports" className={linkClass}>
             Reports
           </NavLink>
+          {user && ['admin', 'member'].includes(user.role) && (
+            <NavLink to="/admin" className={linkClass}>
+              Admin
+            </NavLink>
+          )}
         </div>
 
         <div className="hidden md:flex items-center gap-3">
@@ -64,6 +69,11 @@ export default function Navbar() {
           <NavLink to="/reports" className={linkClass} onClick={() => setOpen(false)}>
             Reports
           </NavLink>
+          {user && ['admin', 'member'].includes(user.role) && (
+            <NavLink to="/admin" className={linkClass} onClick={() => setOpen(false)}>
+              Admin
+            </NavLink>
+          )}
           <button type="button" onClick={() => { logout(); setOpen(false); }} className="text-left text-red-300 py-2">
             Logout
           </button>

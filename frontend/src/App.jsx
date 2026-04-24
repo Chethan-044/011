@@ -2,6 +2,8 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import Navbar from './components/Navbar.jsx';
 import ProtectedRoute from './components/ProtectedRoute.jsx';
+import AdminRoute from './components/AdminRoute.jsx';
+import { ExtensionStreamProvider } from './context/ExtensionStreamContext.jsx';
 import LoginPage from './pages/LoginPage.jsx';
 import RegisterPage from './pages/RegisterPage.jsx';
 import DashboardPage from './pages/DashboardPage.jsx';
@@ -9,6 +11,9 @@ import UploadPage from './pages/UploadPage.jsx';
 import AnalysisPage from './pages/AnalysisPage.jsx';
 import TrendsPage from './pages/TrendsPage.jsx';
 import ReportsPage from './pages/ReportsPage.jsx';
+import AdminLoginPage from './pages/AdminLoginPage.jsx';
+import AdminRegisterPage from './pages/AdminRegisterPage.jsx';
+import AdminDashboardPage from './pages/AdminDashboardPage.jsx';
 
 function AppShell({ children }) {
   return (
@@ -21,7 +26,7 @@ function AppShell({ children }) {
 
 export default function App() {
   return (
-    <>
+    <ExtensionStreamProvider>
       <Toaster position="top-right" />
       <Routes>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
@@ -77,8 +82,24 @@ export default function App() {
             </ProtectedRoute>
           }
         />
+
+        {/* Admin Dashboard with separate auth */}
+        <Route path="/admin/login" element={<AdminLoginPage />} />
+        <Route path="/admin/register" element={<AdminRegisterPage />} />
+        <Route
+          path="/admin"
+          element={
+            <AdminRoute>
+              <AppShell>
+                <AdminDashboardPage />
+              </AppShell>
+            </AdminRoute>
+          }
+        />
+
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
-    </>
+    </ExtensionStreamProvider>
   );
 }
+

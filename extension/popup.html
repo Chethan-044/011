@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ReviewSense Scout</title>
+  <link rel="stylesheet" href="popup.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <div class="popup-container">
+    <!-- Header -->
+    <header class="popup-header">
+      <div class="header-brand">
+        <div class="logo-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8"/>
+            <path d="m21 21-4.3-4.3"/>
+          </svg>
+        </div>
+        <div>
+          <h1 class="header-title">ReviewSense Scout</h1>
+          <p class="header-subtitle" id="hotelName">Not connected</p>
+        </div>
+      </div>
+      <div class="status-dot" id="statusDot" title="Disconnected"></div>
+    </header>
+
+    <!-- Stats Row -->
+    <div class="stats-row" id="statsRow">
+      <div class="stat-card">
+        <span class="stat-value" id="reviewCount">0</span>
+        <span class="stat-label">Scraped</span>
+      </div>
+      <div class="stat-card stat-issues">
+        <span class="stat-value" id="issuesFound">0</span>
+        <span class="stat-label">Issues</span>
+      </div>
+      <div class="stat-card stat-critical">
+        <span class="stat-value" id="criticalCount">0</span>
+        <span class="stat-label">Critical</span>
+      </div>
+    </div>
+
+    <!-- Emerging Issues -->
+    <div class="section" id="issuesSection">
+      <h2 class="section-title">Emerging Issues</h2>
+      <div class="issues-list" id="issuesList">
+        <p class="empty-state">No issues detected yet</p>
+      </div>
+    </div>
+
+    <!-- Toggle -->
+    <div class="toggle-row">
+      <span class="toggle-label">Live Scraping</span>
+      <label class="toggle-switch">
+        <input type="checkbox" id="toggleScraping" checked />
+        <span class="toggle-slider"></span>
+      </label>
+      <span class="toggle-status" id="toggleStatus">ON</span>
+    </div>
+
+    <!-- Open Dashboard -->
+    <button class="btn-dashboard" id="openDashboard">
+      Open Dashboard
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+        <polyline points="15 3 21 3 21 9"/>
+        <line x1="10" y1="14" x2="21" y2="3"/>
+      </svg>
+    </button>
+
+    <!-- Auth Section -->
+    <div class="auth-section" id="authSection">
+      <div class="auth-divider">
+        <span>Login to Backend</span>
+      </div>
+      <form id="loginForm">
+        <input type="email" id="loginEmail" placeholder="Email" required autocomplete="email" />
+        <input type="password" id="loginPassword" placeholder="Password" required autocomplete="current-password" />
+        <button type="submit" class="btn-login" id="loginBtn">Login</button>
+      </form>
+      <p class="auth-error" id="authError"></p>
+    </div>
+
+    <!-- Logged-in indicator -->
+    <div class="auth-logged-in" id="authLoggedIn" style="display:none">
+      <span class="auth-badge">✓ Authenticated</span>
+      <button class="btn-logout" id="logoutBtn">Logout</button>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

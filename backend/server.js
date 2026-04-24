@@ -3,11 +3,14 @@ const http = require('http');
 const path = require('path');
 const express = require('express');
 const cors = require('cors');
+const jwt = require('jsonwebtoken');
 const { Server } = require('socket.io');
 const connectDB = require('./config/db');
 const { initCloudinary } = require('./config/cloudinary');
 const pythonBridge = require('./services/pythonBridge');
 const { initializeRealtimeEngine } = require('./services/realtimeReviewEngine');
+const issueService = require('./services/issueService');
+const User = require('./models/User');
 
 const app = express();
 const httpServer = http.createServer(app);
@@ -34,6 +37,8 @@ app.use('/api/auth', require('./routes/authRoutes'));
 app.use('/api/reviews', require('./routes/reviewRoutes'));
 app.use('/api/trends', require('./routes/trendRoutes'));
 app.use('/api/realtime', require('./routes/realtimeRoutes'));
+app.use('/api/issues', require('./routes/issueRoutes'));
+app.use('/api/extension', require('./routes/extensionRoutes'));
 
 app.get('/api/health', async (_req, res) => {
   try {
@@ -52,9 +57,45 @@ app.get('/api/health', async (_req, res) => {
 const PORT = process.env.PORT || 5000;
 const realtimeEngine = initializeRealtimeEngine(io);
 app.set('realtimeEngine', realtimeEngine);
+app.set('io', io);
+
+// ---------- Socket.io with JWT auth and room architecture ----------
+io.use(async (socket, next) => {
+  try {
+    const token = socket.handshake.auth?.token || socket.handshake.query?.token;
+    if (!token) return next();
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await User.findById(decoded.id).select('-password');
+    if (user) socket.user = user;
+  } catch (_) { /* anonymous connection allowed — will just have no user */ }
+  next();
+});
 
 io.on('connection', (socket) => {
-  console.log('[socket] connected', socket.id);
+  const userName = socket.user?.name || 'anonymous';
+  const userRole = socket.user?.role || 'analyst';
+  console.log(`[socket] connected ${socket.id} user=${userName} role=${userRole}`);
+
+  // Join rooms based on role
+  socket.join('global_feed');
+  if (socket.user) {
+    socket.join(`user_${socket.user._id}`);
+    if (['admin', 'member'].includes(userRole)) {
+      socket.join('admin_dashboard');
+    } else {
+      socket.join('analyst_dashboard');
+    }
+  }
+
+  // Reconnection state sync
+  socket.on('request_sync', async () => {
+    try {
+      const activeIssues = await issueService.getActiveIssues();
+      socket.emit('sync_state', { issues: activeIssues });
+    } catch (err) {
+      console.error('[socket] sync failed:', err.message);
+    }
+  });
 
   socket.on('subscribe_sku', async (payload = {}) => {
     try {
@@ -104,9 +145,13 @@ io.on('connection', (socket) => {
 });
 
 connectDB().then(async () => {
+  // Inject io into issueService for socket broadcasting
+  issueService.setIO(io);
+
   const py = await pythonBridge.checkPythonHealth();
   console.log('[startup] Python AI available:', py.available, 'models:', py.models_loaded);
   httpServer.listen(PORT, () => {
     console.log(`ReviewSense backend listening on port ${PORT}`);
   });
 });
+

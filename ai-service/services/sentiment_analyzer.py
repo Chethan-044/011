@@ -5,7 +5,13 @@ import logging
 from typing import Any, Dict, List
 
 from models.model_loader import ModelLoader
-from services.feature_extractor import FEATURE_KEYWORDS, extract_snippet_for_keyword, find_mentioned_features
+from services.feature_extractor import (
+    FEATURE_KEYWORDS,
+    extract_snippet_for_keyword,
+    find_mentioned_features,
+    detect_domain,
+    get_feature_keywords,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +47,18 @@ class SentimentAnalyzer:
         return "NEUTRAL"
 
     def analyze_overall_sentiment(self, text: str) -> Dict[str, Any]:
-        """Overall sentiment with irony override to SARCASTIC."""
+        """Overall sentiment with smart irony detection.
+
+        The irony model can produce false positives on enthusiastic reviews
+        (lots of '!!', superlatives, emojis). We only override sentiment to
+        SARCASTIC when:
+          1. The irony model confidence is very high (> 0.90)
+          2. There is a genuine conflict: the sentiment model says POSITIVE
+             but the irony model says 'irony' — which suggests the positivity
+             might be performative.
+          3. The sentiment model is NOT already very confident (> 0.85) in a
+             clear direction — if it is, we trust it and just flag for review.
+        """
         sentiment_model = ModelLoader.SENTIMENT_MODEL
         irony_model = ModelLoader.IRONY_MODEL
         if sentiment_model is None or irony_model is None:
@@ -60,10 +77,25 @@ class SentimentAnalyzer:
         i_out = irony_model(text[:512])[0]
         i_label = str(i_out.get("label", "")).lower()
         i_score = float(i_out.get("score", 0.0))
-        irony_positive = "irony" in i_label or "label_1" in i_label
-        is_sarcastic = irony_positive and i_score > 0.75
-        needs_human = is_sarcastic
+        irony_positive = i_label == "irony" or i_label == "label_1"
 
+        # Sarcasm requires: irony model confident AND a sentiment conflict
+        # A "conflict" means the text reads positive but irony model thinks it's ironic
+        irony_detected = irony_positive and i_score > 0.90
+        has_conflict = irony_detected and mapped == "POSITIVE"
+
+        # Tiered approach to handle the sentiment vs irony tension:
+        # - Extreme irony (>0.95): override even strong sentiment (clear sarcasm)
+        # - High irony (0.90-0.95): only override if sentiment isn't very confident
+        #   (enthusiastic genuine reviews trigger irony at 0.85-0.92)
+        if has_conflict and i_score > 0.95:
+            is_sarcastic = True  # Very clearly sarcastic, trust irony model
+        elif has_conflict and conf <= 0.85:
+            is_sarcastic = True  # Sentiment model unsure + irony detected
+        else:
+            is_sarcastic = False
+
+        needs_human = irony_detected  # Always flag for review if irony is detected
         final_sent = "SARCASTIC" if is_sarcastic else mapped
         return {
             "sentiment": final_sent,
@@ -72,17 +104,20 @@ class SentimentAnalyzer:
             "needs_human_review": needs_human,
         }
 
-    def extract_features(self, text: str) -> List[Dict[str, Any]]:
-        """Detect aspects and run ABSA per feature."""
+    def extract_features(self, text: str, product_name: str = "") -> List[Dict[str, Any]]:
+        """Detect aspects and run ABSA per feature, using domain-aware keywords."""
         absa = ModelLoader.ABSA_MODEL
-        found = find_mentioned_features(text)
+        domain = detect_domain(product_name, text)
+        found = find_mentioned_features(text, product_name=product_name, domain=domain)
         results: List[Dict[str, Any]] = []
         if absa is None:
             return results
 
         for feature, kws in found:
             snippet = extract_snippet_for_keyword(text, kws[0])
-            model_input = f"[CLS] {feature} [SEP] {text[:480]}"
+            # Use a human-readable feature label for the ABSA model
+            feature_label = feature.replace("_", " ")
+            model_input = f"[CLS] {feature_label} [SEP] {text[:480]}"
             try:
                 out = absa(model_input[:512])[0]
                 lab = out.get("label", "")
@@ -111,8 +146,8 @@ class SentimentAnalyzer:
         i_out = irony_model(text[:512])[0]
         i_label = str(i_out.get("label", "")).lower()
         i_score = float(i_out.get("score", 0.0))
-        irony_positive = "irony" in i_label or "label_1" in i_label
-        is_sarc = irony_positive and i_score > 0.75
+        irony_positive = i_label == "irony" or i_label == "label_1"
+        is_sarc = irony_positive and i_score > 0.90
         return {
             "is_sarcastic": is_sarc,
             "sarcasm_score": i_score,
@@ -122,8 +157,9 @@ class SentimentAnalyzer:
     def analyze_review(self, review: Dict[str, Any]) -> Dict[str, Any]:
         """Full single-review pipeline."""
         text = review.get("cleaned_text") or review.get("text") or ""
+        product_name = review.get("productName") or review.get("product_name") or ""
         overall = self.analyze_overall_sentiment(text)
-        features = self.extract_features(text)
+        features = self.extract_features(text, product_name=product_name)
         sarcasm = self.detect_sarcasm(text)
         return {
             "review_ref": review,

@@ -4,7 +4,7 @@
 const Issue = require('../models/Issue');
 const User = require('../models/User');
 
-const CRITICAL_THRESHOLD = parseInt(process.env.CRITICAL_THRESHOLD, 10) || 10;
+const CRITICAL_THRESHOLD = parseInt(process.env.CRITICAL_THRESHOLD, 10) || 5;
 const MAX_REPRESENTATIVE_REVIEWS = 20;
 
 let _io = null;

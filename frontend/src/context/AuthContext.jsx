@@ -57,9 +57,9 @@ export function AuthProvider({ children }) {
     return u;
   };
 
-  const register = async (name, email, password) => {
-    console.log('[Auth] register');
-    const { data } = await api.post('/api/auth/register', { name, email, password });
+  const register = async (name, email, password, role) => {
+    console.log('[Auth] register', role || 'analyst');
+    const { data } = await api.post('/api/auth/register', { name, email, password, role: role || 'analyst' });
     if (!data.success) throw new Error(data.message || 'Register failed');
     const t = data.data.token;
     const u = data.data.user;

@@ -5,6 +5,8 @@ import {
   AlertTriangle,
   ArrowUpRight,
   BarChart3,
+  CheckCircle,
+  ChevronDown,
   Clock,
   Download,
   Heart,
@@ -34,6 +36,8 @@ import api from '../api/axios.js';
 import { formatDate, formatNumber } from '../utils/helpers.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import useRealtimeSkuStream from '../hooks/useRealtimeSkuStream.js';
+import useExtensionStream from '../hooks/useExtensionStream.js';
+import useSocket from '../hooks/useSocket.js';
 
 const SENTIMENT_COLORS = { Positive: '#22c55e', Negative: '#ef4444', Neutral: '#6366f1' };
 
@@ -68,6 +72,15 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [liveSku] = useState('SKU123');
   const realtime = useRealtimeSkuStream({ sku: liveSku, enabled: true });
+  const extension = useExtensionStream();
+  const { socket } = useSocket();
+
+  // Socket-driven issue state
+  const [issueAssignments, setIssueAssignments] = useState({});
+  const [resolvedIssues, setResolvedIssues] = useState([]);
+  const [resolvedSet, setResolvedSet] = useState(new Set());
+  const [flashCounters, setFlashCounters] = useState({});
+  const [showResolved, setShowResolved] = useState(false);
 
   useEffect(() => {
     const load = async () => {
@@ -88,6 +101,60 @@ export default function DashboardPage() {
     load();
   }, []);
 
+  /* ── Socket listeners for real-time issue resolution + occurrence sync ── */
+  useEffect(() => {
+    if (!socket) return;
+
+    const onNewCritical = (payload) => {
+      setIssueAssignments((prev) => ({
+        ...prev,
+        [payload.topic]: {
+          assignee: payload.assignedTo,
+          status: payload.status || 'in_progress',
+        },
+      }));
+    };
+
+    const onResolved = (payload) => {
+      setResolvedSet((prev) => new Set(prev).add(payload.topic));
+      setIssueAssignments((prev) => ({
+        ...prev,
+        [payload.topic]: {
+          ...prev[payload.topic],
+          status: 'resolved',
+          resolvedBy: payload.resolvedBy,
+        },
+      }));
+      // After 10 seconds, move to Recently Resolved accordion
+      setTimeout(() => {
+        setResolvedIssues((prev) => [{ topic: payload.topic, resolvedBy: payload.resolvedBy, resolvedAt: payload.resolvedAt, note: payload.resolutionNote }, ...prev]);
+      }, 10000);
+    };
+
+    const onOccurrence = (payload) => {
+      // Flash the counter for this topic
+      setFlashCounters((prev) => ({ ...prev, [payload.topic]: true }));
+      setTimeout(() => setFlashCounters((prev) => ({ ...prev, [payload.topic]: false })), 600);
+
+      if (payload.crossedCriticalThreshold) {
+        setIssueAssignments((prev) => ({
+          ...prev,
+          [payload.topic]: { ...prev[payload.topic], status: 'critical' },
+        }));
+      }
+    };
+
+    socket.on('new_critical_issue', onNewCritical);
+    socket.on('issue_resolved', onResolved);
+    socket.on('occurrence_updated', onOccurrence);
+
+    return () => {
+      socket.off('new_critical_issue', onNewCritical);
+      socket.off('issue_resolved', onResolved);
+      socket.off('occurrence_updated', onOccurrence);
+    };
+  }, [socket]);
+
   const stats = useMemo(() => {
     const products = new Set(batches.map((b) => b.productName));
     const totalReviews = batches.reduce((s, b) => s + (b.totalReviews || 0), 0);
@@ -96,11 +163,42 @@ export default function DashboardPage() {
     return { products: products.size, totalReviews, alerts: alerts.length, avgHealth };
   }, [batches, alerts]);
 
-  const state = realtime.state;
-  const sentimentDist = state?.sentimentDistribution || {};
-  const rollingReviews = state?.rollingReviews || [];
-  const issueClusters = state?.issueClusters || {};
-  const totalLive = state?.processedCount || 0;
+  const skuState = realtime.state;
+  const extState = extension.state;
+
+  // Merge SKU stream + Extension stream data
+  const sentimentDist = {
+    Positive: (skuState?.sentimentDistribution?.Positive || 0) + (extState?.sentimentDistribution?.Positive || 0),
+    Negative: (skuState?.sentimentDistribution?.Negative || 0) + (extState?.sentimentDistribution?.Negative || 0),
+    Neutral: (skuState?.sentimentDistribution?.Neutral || 0) + (extState?.sentimentDistribution?.Neutral || 0),
+  };
+  const rollingReviews = [...(skuState?.rollingReviews || []), ...(extState?.rollingReviews || [])];
+  const issueClusters = { ...(skuState?.issueClusters || {}), ...(extState?.issueClusters || {}) };
+  // Merge issue cluster counts
+  if (skuState?.issueClusters && extState?.issueClusters) {
+    for (const [k, v] of Object.entries(extState.issueClusters)) {
+      issueClusters[k] = (skuState.issueClusters[k] || 0) + v;
+    }
+  }
+  const totalLive = (skuState?.processedCount || 0) + (extState?.processedCount || 0);
+  const mergedFeatureStats = { ...(skuState?.featureStats || {}) };
+  if (extState?.featureStats) {
+    for (const [feat, counts] of Object.entries(extState.featureStats)) {
+      if (!mergedFeatureStats[feat]) mergedFeatureStats[feat] = { positive: 0, negative: 0, neutral: 0 };
+      mergedFeatureStats[feat].positive += counts.positive || 0;
+      mergedFeatureStats[feat].negative += counts.negative || 0;
+      mergedFeatureStats[feat].neutral += counts.neutral || 0;
+    }
+  }
+  const state = {
+    ...(skuState || {}),
+    sentimentDistribution: sentimentDist,
+    rollingReviews,
+    issueClusters,
+    processedCount: totalLive,
+    featureStats: mergedFeatureStats,
+    lastPolledAt: extState?.lastPolledAt || skuState?.lastPolledAt,
+  };
 
   const pieData = useMemo(() => [
     { name: 'Positive', value: sentimentDist.Positive || 0 },
@@ -280,7 +378,7 @@ export default function DashboardPage() {
           )}
         </div>
 
-        {/* Emerging Issues */}
+        {/* Emerging Issues — with real-time assignment & resolution sync */}
         <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm">
           <h2 className="text-base font-semibold text-slate-900 mb-4 flex items-center gap-2">
             <AlertTriangle size={18} className="text-red-500" />
@@ -292,33 +390,112 @@ export default function DashboardPage() {
             )}
           </h2>
           {emergingIssues.length > 0 ? (
-            <div className="space-y-2.5 max-h-56 overflow-y-auto">
-              {emergingIssues.slice(0, 6).map((issue, i) => (
-                <div key={i} className="bg-slate-50 border border-gray-100 rounded-xl p-3 hover:bg-gray-50 transition-colors">
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span className="text-sm font-medium text-slate-900 truncate">{issue.cluster}</span>
-                    <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full shrink-0 ml-2 ${severityBadge(issue.severity)}`}>
-                      {issue.severity}
-                    </span>
-                  </div>
-                  {issue.message && <p className="text-xs text-slate-500 truncate">{issue.message}</p>}
-                  <div className="flex items-center gap-2 mt-1.5">
-                    <span className="text-xs text-slate-400">{issue.count} occurrences</span>
-                    <div className="flex-1 bg-gray-200 rounded-full h-1">
-                      <div
-                        className="h-1 rounded-full bg-gradient-to-r from-red-400 to-orange-400 transition-all duration-500"
-                        style={{ width: `${Math.min(100, issue.count * 15)}%` }}
-                      />
+            <div className="space-y-2.5 max-h-64 overflow-y-auto">
+              {emergingIssues.slice(0, 8).map((issue, i) => {
+                const isResolved = resolvedSet.has(issue.cluster);
+                const assignment = issueAssignments[issue.cluster];
+                const isFlashing = flashCounters[issue.cluster];
+                const barWidth = isResolved ? 15 : Math.min(100, issue.count * 15);
+                const barColor = isResolved
+                  ? 'from-emerald-400 to-emerald-500'
+                  : 'from-red-400 to-orange-400';
+                const displaySeverity = isResolved ? 'Resolved' : (assignment?.status === 'critical' ? 'Critical' : issue.severity);
+                const badgeClass = isResolved
+                  ? 'bg-emerald-50 text-emerald-600 border border-emerald-200'
+                  : severityBadge(displaySeverity);
+
+                // Skip if it's been moved to the resolved accordion
+                if (resolvedIssues.some(r => r.topic === issue.cluster)) return null;
+
+                return (
+                  <div
+                    key={i}
+                    className={`bg-slate-50 border border-gray-100 rounded-xl p-3 hover:bg-gray-50 transition-all duration-800 ${
+                      isResolved ? 'opacity-70' : ''
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1.5">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="text-sm font-medium text-slate-900 truncate">{issue.cluster}</span>
+                        {isResolved && <CheckCircle size={14} className="text-emerald-500 shrink-0" />}
+                      </div>
+                      <span
+                        className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full shrink-0 ml-2 transition-all duration-600 ${badgeClass}`}
+                      >
+                        {displaySeverity}
+                      </span>
+                    </div>
+                    {issue.message && <p className="text-xs text-slate-500 truncate">{issue.message}</p>}
+
+                    {/* Assignee label */}
+                    {assignment && (
+                      <div className="flex items-center gap-1.5 mt-1">
+                        {assignment.assignee?.avatar && (
+                          <img src={assignment.assignee.avatar} alt="" className="w-4 h-4 rounded-full" />
+                        )}
+                        <span className="text-[10px] text-slate-500">
+                          {isResolved
+                            ? `Resolved by: ${assignment.resolvedBy?.name || assignment.assignee?.name || 'Admin'}`
+                            : `Assigned to: ${assignment.assignee?.name || 'Admin'}`
+                          }
+                        </span>
+                      </div>
+                    )}
+
+                    {/* Progress bar + counter */}
+                    <div className="flex items-center gap-2 mt-1.5">
+                      <span
+                        className={`text-xs transition-all duration-300 ${
+                          isFlashing ? 'text-amber-500 font-bold scale-110' : 'text-slate-400'
+                        }`}
+                      >
+                        {isResolved ? 0 : issue.count} occurrences
+                      </span>
+                      <div className="flex-1 bg-gray-200 rounded-full h-1.5">
+                        <div
+                          className={`h-1.5 rounded-full bg-gradient-to-r ${barColor}`}
+                          style={{
+                            width: `${barWidth}%`,
+                            transition: 'width 0.8s ease-out, background-color 0.8s ease-out',
+                          }}
+                        />
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           ) : (
             <div className="h-56 flex flex-col items-center justify-center text-slate-400">
               <Shield size={36} className="mb-3 opacity-30" />
               <p className="text-sm">No emerging issues</p>
               <p className="text-xs text-slate-400 mt-1">Live monitoring active</p>
+            </div>
+          )}
+
+          {/* Recently Resolved Accordion */}
+          {resolvedIssues.length > 0 && (
+            <div className="mt-4 border-t border-gray-100 pt-3">
+              <button
+                type="button"
+                onClick={() => setShowResolved(!showResolved)}
+                className="flex items-center gap-2 text-xs font-medium text-emerald-600 hover:text-emerald-500 transition-colors w-full"
+              >
+                <CheckCircle size={14} />
+                Recently Resolved ({resolvedIssues.length})
+                <ChevronDown size={14} className={`ml-auto transition-transform duration-300 ${showResolved ? 'rotate-180' : ''}`} />
+              </button>
+              {showResolved && (
+                <div className="mt-2 space-y-1.5 animate-slideDown">
+                  {resolvedIssues.slice(0, 5).map((r, ri) => (
+                    <div key={ri} className="bg-emerald-50/50 border border-emerald-100 rounded-lg px-3 py-2 flex items-center gap-2">
+                      <CheckCircle size={12} className="text-emerald-500 shrink-0" />
+                      <span className="text-[11px] text-slate-600 truncate">{r.topic}</span>
+                      <span className="text-[10px] text-slate-400 ml-auto shrink-0">by {r.resolvedBy?.name || 'Admin'}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>

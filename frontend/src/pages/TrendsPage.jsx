@@ -33,6 +33,7 @@ import {
 } from 'lucide-react';
 import api from '../api/axios.js';
 import useRealtimeSkuStream from '../hooks/useRealtimeSkuStream.js';
+import useExtensionStream from '../hooks/useExtensionStream.js';
 
 const SENTIMENT_COLORS = { Positive: '#22c55e', Negative: '#ef4444', Neutral: '#6366f1' };
 const FEATURE_COLORS = ['#22c55e', '#ef4444', '#f59e0b', '#6366f1', '#ec4899', '#0ea5e9', '#8b5cf6', '#14b8a6'];
@@ -114,6 +115,7 @@ export default function TrendsPage() {
   const [timeline, setTimeline] = useState([]);
   const [loading, setLoading] = useState(true);
   const realtime = useRealtimeSkuStream({ sku: liveSku, enabled: Boolean(liveSku) });
+  const extension = useExtensionStream();
 
   useEffect(() => {
     const init = async () => {
@@ -150,11 +152,40 @@ export default function TrendsPage() {
 
   // ---- Derived data ----
   const products = [...new Set(batches.map((b) => b.productName))];
-  const state = realtime.state;
-  const rollingReviews = state?.rollingReviews || [];
-  const featureStats = state?.featureStats || {};
-  const sentimentDist = state?.sentimentDistribution || {};
-  const issueClusters = state?.issueClusters || {};
+  const skuState = realtime.state;
+  const extState = extension.state;
+
+  // Merge SKU + Extension stream data
+  const rollingReviews = [...(skuState?.rollingReviews || []), ...(extState?.rollingReviews || [])];
+  const featureStats = { ...(skuState?.featureStats || {}) };
+  if (extState?.featureStats) {
+    for (const [feat, counts] of Object.entries(extState.featureStats)) {
+      if (!featureStats[feat]) featureStats[feat] = { positive: 0, negative: 0, neutral: 0 };
+      featureStats[feat].positive += counts.positive || 0;
+      featureStats[feat].negative += counts.negative || 0;
+      featureStats[feat].neutral += counts.neutral || 0;
+    }
+  }
+  const sentimentDist = {
+    Positive: (skuState?.sentimentDistribution?.Positive || 0) + (extState?.sentimentDistribution?.Positive || 0),
+    Negative: (skuState?.sentimentDistribution?.Negative || 0) + (extState?.sentimentDistribution?.Negative || 0),
+    Neutral: (skuState?.sentimentDistribution?.Neutral || 0) + (extState?.sentimentDistribution?.Neutral || 0),
+  };
+  const issueClusters = { ...(skuState?.issueClusters || {}) };
+  if (extState?.issueClusters) {
+    for (const [k, v] of Object.entries(extState.issueClusters)) {
+      issueClusters[k] = (issueClusters[k] || 0) + v;
+    }
+  }
+  const state = {
+    ...(skuState || {}),
+    rollingReviews,
+    featureStats,
+    sentimentDistribution: sentimentDist,
+    issueClusters,
+    processedCount: (skuState?.processedCount || 0) + (extState?.processedCount || 0),
+    lastPolledAt: extState?.lastPolledAt || skuState?.lastPolledAt,
+  };
 
   const pieData = useMemo(() => [
     { name: 'Positive', value: sentimentDist.Positive || 0 },
